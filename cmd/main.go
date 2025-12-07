@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/xandeum/prpc-go"
+	"github.com/DavidNzube101/xandeum-prpc-go"
 )
 
 func main() {
