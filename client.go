@@ -39,7 +39,7 @@ type Client struct {
 func NewClient(ip string) *Client {
 	return &Client{
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 3 * time.Second, // Reduced timeout
 		},
 		baseURL: fmt.Sprintf("http://%s:6000/rpc", ip),
 	}
