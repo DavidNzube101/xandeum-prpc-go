@@ -36,10 +36,14 @@ type Client struct {
 }
 
 // NewClient creates a new pRPC client for a given pNode IP
-func NewClient(ip string) *Client {
+func NewClient(ip string, timeout ...time.Duration) *Client {
+	clientTimeout := 8 * time.Second
+	if len(timeout) > 0 {
+		clientTimeout = timeout[0]
+	}
 	return &Client{
 		httpClient: &http.Client{
-			Timeout: 8 * time.Second, // Increased timeout
+			Timeout: clientTimeout,
 		},
 		baseURL: fmt.Sprintf("http://%s:6000/rpc", ip),
 	}
