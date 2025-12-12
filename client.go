@@ -2,20 +2,20 @@ package prpc
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 )
 
-// RPCRequest represents a JSON-RPC 2.0 request
 type RPCRequest struct {
 	JSONRPC string      `json:"jsonrpc"`
 	Method  string      `json:"method"`
 	ID      interface{} `json:"id"`
 }
 
-// RPCResponse represents a JSON-RPC 2.0 response
 type RPCResponse struct {
 	JSONRPC string      `json:"jsonrpc"`
 	Result  interface{} `json:"result,omitempty"`
@@ -23,21 +23,35 @@ type RPCResponse struct {
 	ID      interface{} `json:"id"`
 }
 
-// RPCError represents a JSON-RPC 2.0 error
 type RPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 }
 
-// Client represents a pRPC client
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
 }
 
-// NewClient creates a new pRPC client for a given pNode IP
+const (
+	DefaultTimeout = 8 * time.Second
+)
+
+var (
+	DefaultSeedIPs = []string{
+		"173.212.220.65",
+		"161.97.97.41",
+		"192.190.136.36",
+		"192.190.136.38",
+		"207.244.255.1",
+		"192.190.136.28",
+		"192.190.136.29",
+		"173.212.203.145",
+	}
+)
+
 func NewClient(ip string, timeout ...time.Duration) *Client {
-	clientTimeout := 8 * time.Second
+	clientTimeout := DefaultTimeout
 	if len(timeout) > 0 {
 		clientTimeout = timeout[0]
 	}
@@ -49,7 +63,6 @@ func NewClient(ip string, timeout ...time.Duration) *Client {
 	}
 }
 
-// call performs a JSON-RPC call
 func (c *Client) call(method string, params interface{}) (*RPCResponse, error) {
 	req := RPCRequest{
 		JSONRPC: "2.0",
@@ -82,4 +95,67 @@ func (c *Client) call(method string, params interface{}) (*RPCResponse, error) {
 	}
 
 	return &rpcResp, nil
+}
+
+type FindPNodeOptions struct {
+	AddSeeds     []string
+	ReplaceSeeds []string
+	Timeout      time.Duration
+}
+
+func FindPNode(nodeId string, options *FindPNodeOptions) (*Pod, error) {
+	opts := options
+	if opts == nil {
+		opts = &FindPNodeOptions{}
+	}
+
+	timeout := opts.Timeout
+	if timeout == 0 {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	seeds := DefaultSeedIPs
+	if opts.ReplaceSeeds != nil {
+		seeds = opts.ReplaceSeeds
+	} else if opts.AddSeeds != nil {
+		seeds = append(seeds, opts.AddSeeds...)
+	}
+
+	resultChan := make(chan *Pod, len(seeds))
+	errChan := make(chan error, len(seeds))
+
+	for _, seedIP := range seeds {
+		go func(ip string) {
+			client := NewClient(ip, timeout)
+			podsResp, err := client.GetPods()
+			if err != nil {
+				errChan <- fmt.Errorf("failed to get pods from seed %s: %w", ip, err)
+				return
+			}
+			for _, pod := range podsResp.Pods {
+				if pod.Pubkey == nodeId {
+					resultChan <- &pod
+					return
+				}
+			}
+			errChan <- nil
+		}(seedIP)
+	}
+
+	for i := 0; i < len(seeds); i++ {
+		select {
+		case pod := <-resultChan:
+			return pod, nil
+		case err := <-errChan:
+			if err != nil {
+				log.Printf("Seed query error: %v", err)
+			}
+		case <-ctx.Done():
+			return nil, fmt.Errorf("timed out waiting for pNode %s from seeds", nodeId)
+		}
+	}
+
+	return nil, fmt.Errorf("pNode %s not found on any of the seeds", nodeId)
 }
